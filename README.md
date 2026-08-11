@@ -1,0 +1,2 @@
+# PinkClub-Toys
+FANZAの大人のおもちゃに特化したアフィリエイトサイト用CMS
