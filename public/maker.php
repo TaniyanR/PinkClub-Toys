@@ -1,159 +1,56 @@
 <?php
-
 declare(strict_types=1);
 
 require_once __DIR__ . '/_bootstrap.php';
 require_once __DIR__ . '/../lib/repository.php';
-require_once __DIR__ . '/../lib/public_rankings.php';
-require_once __DIR__ . '/partials/public_ui.php';
+require_once __DIR__ . '/partials/toys_product_ui.php';
 
-$id = (int)get('id', 0);
-$row = null;
-$list = [];
-$makerPage = max(1, (int)get('page', 1));
-$limit = 20;
-$offset = ($makerPage - 1) * $limit;
-$hasNext = false;
-try {
-    $row = fetch_maker($id);
-    if ($row !== null) {
-        $rows = dedupe_items_by_key(fetch_items_by_maker((int)$row['id'], $limit + 1, $offset));
-        [$list, $hasNext] = paginate_items($rows, $limit);
-    }
-} catch (Throwable) {
-    $row = null;
-    $list = [];
-}
-if ($row !== null && $makerPage === 1 && $list === []) {
+$id = max(1, (int)get('id', 0));
+$maker = fetch_maker($id);
+if (!$maker) {
     require __DIR__ . '/404.php';
-}
-$makerName = trim((string)($row['name'] ?? ''));
-$makerNameSql = db_column_exists('item_makers', 'item_id')
-    ? "SELECT im.maker_name FROM item_makers im INNER JOIN makers m ON m.id = :id AND im.dmm_id = m.dmm_id WHERE TRIM(COALESCE(im.maker_name, '')) <> '' GROUP BY im.maker_name ORDER BY COUNT(*) DESC, im.maker_name ASC LIMIT 1"
-    : "SELECT maker_name FROM item_makers WHERE maker_id = :id AND TRIM(COALESCE(maker_name, '')) <> '' GROUP BY maker_name ORDER BY COUNT(*) DESC, maker_name ASC LIMIT 1";
-try {
-    $makerNameStmt = db()->prepare($makerNameSql);
-    $makerNameStmt->execute([':id' => $id]);
-    $makerNameCandidate = trim((string)($makerNameStmt->fetchColumn() ?: ''));
-    if ($makerNameCandidate !== '' && !pcf_is_noise_name($makerNameCandidate)) {
-        $makerName = $makerNameCandidate;
-    }
-} catch (Throwable) {
-}
-$makerNameIsMutualLink = false;
-if ($makerName !== '') {
-    try {
-        $mutualLinkStmt = db()->prepare('SELECT id FROM mutual_links WHERE site_name = :name LIMIT 1');
-        $mutualLinkStmt->execute([':name' => $makerName]);
-        $makerNameIsMutualLink = (bool)$mutualLinkStmt->fetchColumn();
-    } catch (Throwable) {
-        $makerNameIsMutualLink = false;
-    }
-}
-if ($row === null || $makerName === '' || pcf_is_noise_name($makerName) || $makerNameIsMutualLink) {
-    require __DIR__ . '/404.php';
+    exit;
 }
 
+$page = max(1, (int)get('page', 1));
+$perPage = 32;
+$offset = ($page - 1) * $perPage;
+$name = trim((string)($maker['name'] ?? 'メーカー'));
+$title = $name . 'の商品';
+$pageDescription = $name . 'の大人のおもちゃを新着順・人気順で紹介します。';
+$canonicalUrl = public_url('maker.php?id=' . $id);
+$sort = trim((string)get('sort', 'new'));
+$orderBy = $sort === 'popular' ? 'i.view_count DESC,i.id DESC' : 'i.release_date DESC,i.id DESC';
+
+$total = 0;
+$items = [];
 try {
-    analytics_log_maker_page_view((int)$row['id']);
+    $count = db()->prepare('SELECT COUNT(DISTINCT i.id) FROM items i INNER JOIN item_makers im ON im.item_id=i.id INNER JOIN makers m ON m.dmm_id=im.dmm_id WHERE m.id=:id AND ' . items_product_source_where('i'));
+    $count->execute([':id' => $id]);
+    $total = (int)$count->fetchColumn();
+
+    $stmt = db()->prepare('SELECT DISTINCT i.* FROM items i INNER JOIN item_makers im ON im.item_id=i.id INNER JOIN makers m ON m.dmm_id=im.dmm_id WHERE m.id=:id AND ' . items_product_source_where('i') . ' ORDER BY ' . $orderBy . ' LIMIT :limit OFFSET :offset');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $stmt->execute();
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 } catch (Throwable $e) {
-    error_log('maker page view logging failed: ' . $e->getMessage());
+    error_log('Toys maker page failed: ' . $e->getMessage());
 }
 
-$accessRankingPeriod = trim((string)get('rank_period', 'daily'));
-$accessRankingTabs = [
-    'daily' => ['label' => '本日'],
-    'weekly' => ['label' => '週間'],
-    'monthly' => ['label' => '月間'],
-    'yearly' => ['label' => '年間'],
-];
-if (!isset($accessRankingTabs[$accessRankingPeriod])) {
-    $accessRankingPeriod = 'daily';
-}
-$accessRankingRows = pcf_public_weighted_ranking('makers', $accessRankingPeriod);
-
-$title = $makerName;
-$pageDescription = mb_strimwidth($makerName . 'の作品一覧。FANZAで販売中の最新作・人気作品を紹介。', 0, 150, '…', 'UTF-8');
-$canonicalUrl = public_url('maker.php') . '?' . http_build_query([
-    'id' => $id,
-    'page' => $makerPage > 1 ? $makerPage : null,
-]);
-if ($makerPage > 1) {
-    $relPrev = public_url('maker.php') . '?' . http_build_query(['id' => $id, 'page' => $makerPage - 1]);
-}
-if ($hasNext) {
-    $relNext = public_url('maker.php') . '?' . http_build_query(['id' => $id, 'page' => $makerPage + 1]);
-}
 require __DIR__ . '/partials/header.php';
+toys_render_styles();
 ?>
-<?php pcf_render_breadcrumbs([
-    ['label' => 'トップ', 'url' => public_url('index.php')],
-    ['label' => 'メーカー一覧', 'url' => public_url('makers.php')],
-    ['label' => $makerName],
-]); ?>
-
-<section class="pcf-hero">
-  <h1 class="pcf-hero__title"><?= e($makerName) ?></h1>
-  <?php if (!empty($row['ruby'])): ?><p class="pcf-hero__subtitle">読み: <?= e((string)$row['ruby']) ?></p><?php endif; ?>
-</section>
-
-<h2 class="pcf-section-title"><?= e($makerName) ?>一覧</h2>
-<?php if ($list !== []): ?>
-  <section class="pcf-related-grid pcf-maker-related-grid">
-    <?php foreach ($list as $item): pcf_render_item_card(is_array($item) ? $item : []); endforeach; ?>
-  </section>
-  <nav class="pcf-pagination" aria-label="ページネーション">
-    <?php if ($makerPage > 1): ?>
-      <a class="pcf-pagination__link" href="<?= e(public_url('maker.php') . '?' . http_build_query(['id' => $id, 'page' => $makerPage - 1])) ?>">前へ</a>
-    <?php endif; ?>
-    <span class="pcf-pagination__link is-current"><?= e((string)$makerPage) ?></span>
-    <?php if ($hasNext): ?>
-      <a class="pcf-pagination__link" href="<?= e(public_url('maker.php') . '?' . http_build_query(['id' => $id, 'page' => $makerPage + 1])) ?>">次へ</a>
-    <?php endif; ?>
-  </nav>
-<?php else: ?>
-  <?php pcf_render_empty('このメーカーの商品はありません。'); ?>
-<?php endif; ?>
-
-<section id="access-ranking" class="block" style="margin-top:24px;">
-  <h2 class="section-title">人気のメーカーランキング！</h2>
-  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-    <?php foreach ($accessRankingTabs as $tabKey => $tabConfig): ?>
-      <?php $tabUrl = public_url('maker.php') . '?id=' . rawurlencode((string)$id) . '&rank_period=' . rawurlencode((string)$tabKey) . '#access-ranking'; ?>
-      <?php $tabStyle = $accessRankingPeriod === $tabKey ? 'display:inline-block; padding:6px 12px; border:1px solid #0b5ed7; border-radius:6px; background:#0b5ed7; color:#fff; font-weight:700; text-decoration:none;' : 'display:inline-block; padding:6px 12px; border:1px solid #0b5ed7; border-radius:6px; background:#fff; color:#0b5ed7; font-weight:700; text-decoration:none;'; ?>
-      <a href="<?= e($tabUrl) ?>" rel="nofollow" style="<?= e($tabStyle) ?>"><?= e((string)$tabConfig['label']) ?></a>
-    <?php endforeach; ?>
-  </div>
-  <?php if ($accessRankingRows !== []): ?>
-    <div style="max-height:800px; overflow-y:auto; border:1px solid #ddd;">
-      <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
-        <thead>
-          <tr>
-            <th style="width:80px; text-align:center; padding:8px; border-bottom:1px solid #ddd; background:#0b5ed7; color:#fff;">順位</th>
-            <th style="width:auto; text-align:center; padding:8px; border-bottom:1px solid #ddd; background:#0b5ed7; color:#fff;">メーカー名</th>
-            <th style="width:120px; text-align:center; padding:8px; border-bottom:1px solid #ddd; background:#0b5ed7; color:#fff;">ランキング点</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($accessRankingRows as $index => $rankingRow): ?>
-            <tr>
-              <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;"><?= e((string)($index + 1)) ?></td>
-              <td style="padding:8px; border-bottom:1px solid #eee; text-align:left;">
-                <?php
-                $rankingMakerUrl = public_url('maker.php') . '?id=' . rawurlencode((string)($rankingRow['id'] ?? ''));
-                ?>
-                <a href="<?= e($rankingMakerUrl) ?>"><?= e((string)($rankingRow['name'] ?? '')) ?></a>
-              </td>
-              <td style="padding:8px; border-bottom:1px solid #eee; text-align:center;"><?= e((string)((int)($rankingRow['access_count'] ?? 0))) ?></td>
-            </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
-    </div>
-  <?php else: ?>
-    <?php pcf_render_empty('人気のメーカーランキング！のデータがありません。'); ?>
-  <?php endif; ?>
-</section>
-
-<?php pcf_render_sample_movie_modal(); ?>
+<nav class="pcf-breadcrumb" aria-label="パンくず"><span class="pcf-breadcrumb__item"><a href="<?= e(public_url('')) ?>">ホーム</a></span><span class="pcf-breadcrumb__item"><a href="<?= e(public_url('makers.php')) ?>">メーカー</a></span><span class="pcf-breadcrumb__item"><?= e($name) ?></span></nav>
+<h1><?= e($name) ?>の商品</h1>
+<p><?= e($name) ?>の商品を<?= e(number_format($total)) ?>件掲載しています。</p>
+<form class="toys-toolbar" method="get" action="<?= e(public_url('maker.php')) ?>">
+  <input type="hidden" name="id" value="<?= $id ?>">
+  <label>並び順<select name="sort"><option value="new"<?= $sort === 'new' ? ' selected' : '' ?>>新着順</option><option value="popular"<?= $sort === 'popular' ? ' selected' : '' ?>>人気順</option></select></label>
+  <button type="submit">並び替える</button>
+</form>
+<?php if ($items !== []): ?><div class="toys-grid"><?php foreach ($items as $item): toys_render_product_card($item); endforeach; ?></div><?php else: ?><div class="toys-empty">このメーカーの商品はまだありません。</div><?php endif; ?>
+<?php $pages=max(1,(int)ceil($total/$perPage)); if($pages>1): ?><nav class="toys-pagination" aria-label="ページ送り"><?php for($p=max(1,$page-2);$p<=min($pages,$page+2);$p++): $href=public_url('maker.php?'.http_build_query(['id'=>$id,'sort'=>$sort,'page'=>$p])); ?><?= $p===$page?'<span class="is-current">'.$p.'</span>':'<a href="'.e($href).'">'.$p.'</a>' ?><?php endfor; ?></nav><?php endif; ?>
+<section class="toys-section"><h2><?= e($name) ?>の人気商品</h2><p>このページでは閲覧数をもとに人気順へ切り替えて比較できます。</p></section>
 <?php require __DIR__ . '/partials/footer.php'; ?>
