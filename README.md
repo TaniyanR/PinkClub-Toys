@@ -102,6 +102,15 @@ php /path/to/PinkClub-Toys/scripts/auto_import.php
 - API設定: `/admin/api_items.php`
 - Floor同期: `/admin/sync_floors.php`
 
+## デプロイ後の確認
+
+- API設定の「10件テスト取得」で商品が保存されること
+- TOPに新着商品・人気商品・カテゴリ・メーカーが表示されること
+- 商品一覧で検索・カテゴリ・メーカー・並び順が動くこと
+- 商品詳細で画像・価格・メーカー・カテゴリ・レビュー・FANZAリンクが表示されること
+- `/public/sitemap.php` に商品・カテゴリ・メーカー・ランキングが出力されること
+- 管理画面、cron、アクセス解析が従来どおり動作すること
+
 ## 設定とセキュリティ
 
 - DB接続情報やAPI認証情報をGitへコミットしないでください。
