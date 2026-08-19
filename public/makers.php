@@ -95,9 +95,10 @@ unset($groupRows);
 $sortByName($otherRows);
 
 $title = 'メーカー一覧';
+$pageDescription = '大人のおもちゃをメーカー・ブランドから探せます。';
 require __DIR__ . '/partials/header.php';
 ?>
-<?php pcf_render_hero('メーカー一覧'); ?>
+<?php pcf_render_hero('メーカー一覧', 'メーカー・ブランドから探す'); ?>
 
 <?php if ($displayRows !== []): ?>
   <div class="pcf-kana-directory">

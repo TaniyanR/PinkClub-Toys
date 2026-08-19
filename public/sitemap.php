@@ -11,209 +11,98 @@ function sitemap_e(string $value): string
     return htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8');
 }
 
-function sitemap_url(string $loc, string $changefreq, string $priority, string $lastmod = ''): void
+function sitemap_url(string $loc, string $changefreq, string $priority): void
 {
     echo "  <url>\n";
     echo '    <loc>' . sitemap_e($loc) . "</loc>\n";
-    if ($lastmod !== '') {
-        echo '    <lastmod>' . sitemap_e(substr($lastmod, 0, 10)) . "</lastmod>\n";
-    }
     echo '    <changefreq>' . sitemap_e($changefreq) . "</changefreq>\n";
     echo '    <priority>' . sitemap_e($priority) . "</priority>\n";
     echo "  </url>\n";
 }
 
-function sitemap_product_where(string $alias): string
-{
-    return items_product_source_where($alias);
-}
+$sources = [
+    [
+        'from' => 'items entity',
+        'path' => 'item.php',
+        'where' => items_product_source_where('entity'),
+        'priority' => '0.8',
+    ],
+    [
+        'from' => 'genres entity',
+        'path' => 'genre.php',
+        'where' => "TRIM(COALESCE(entity.name,''))<>'' AND EXISTS (SELECT 1 FROM item_genres r INNER JOIN items i ON i.id=r.item_id WHERE r.dmm_id=entity.dmm_id AND " . items_product_source_where('i') . ')',
+        'priority' => '0.7',
+    ],
+    [
+        'from' => 'makers entity',
+        'path' => 'maker.php',
+        'where' => "TRIM(COALESCE(entity.name,''))<>'' AND EXISTS (SELECT 1 FROM item_makers r INNER JOIN items i ON i.id=r.item_id WHERE r.dmm_id=entity.dmm_id AND " . items_product_source_where('i') . ')',
+        'priority' => '0.7',
+    ],
+];
 
-/**
- * Only expose URLs that their detail handlers can render as indexable pages.
- * Master tables contain historical/orphan rows, so listing every row creates
- * sitemap URLs which immediately return 404.
- *
- * @return array<int,array{from:string,path:string,changefreq:string,priority:string,where:string}>
- */
-function sitemap_sources(): array
-{
-    $sources = [];
-
-    if (db_table_exists('items')) {
-        $sources[] = [
-            'from' => 'items entity',
-            'path' => 'item.php',
-            'changefreq' => 'weekly',
-            'priority' => '0.8',
-            'where' => sitemap_product_where('entity'),
-        ];
-    }
-
-    $masterSources = [
-        'genres' => ['relation' => 'item_genres', 'path' => 'genre.php'],
-        'series_master' => ['relation' => 'item_series', 'path' => 'series_detail.php'],
-        'actresses' => ['relation' => 'item_actresses', 'path' => 'actress.php'],
-        'makers' => ['relation' => 'item_makers', 'path' => 'maker.php'],
-    ];
-
-    foreach ($masterSources as $table => $config) {
-        $relation = (string)$config['relation'];
-        if (!db_table_exists($table) || !db_table_exists($relation)) {
-            continue;
-        }
-
-        $where = [
-            "TRIM(COALESCE(entity.name, '')) <> ''",
-            "LOWER(entity.name) NOT LIKE '%http://%'",
-            "LOWER(entity.name) NOT LIKE '%https://%'",
-            "LOWER(entity.name) NOT LIKE '%www.%'",
-            "entity.name NOT LIKE '%/%'",
-        ];
-
-        if ($table === 'actresses') {
-            $where[] = "entity.dmm_id REGEXP '^[0-9]+$'";
-        }
-        if ($table === 'series_master') {
-            $redirectSeriesIds = array_keys(series_canonical_maker_redirects());
-            if ($redirectSeriesIds !== []) {
-                $where[] = 'entity.id NOT IN (' . implode(',', array_map('intval', $redirectSeriesIds)) . ')';
-            }
-        }
-        if ($table === 'makers' && db_table_exists('mutual_links')) {
-            $where[] = 'NOT EXISTS (SELECT 1 FROM mutual_links ml WHERE ml.site_name = entity.name)';
-        }
-
-        if (db_column_exists($relation, 'item_id')) {
-            $where[] = 'EXISTS ('
-                . 'SELECT 1 FROM ' . $relation . ' relation_row '
-                . 'INNER JOIN items related_item ON related_item.id = relation_row.item_id '
-                . 'WHERE relation_row.dmm_id = entity.dmm_id '
-                . 'AND ' . sitemap_product_where('related_item')
-                . ')';
-        } else {
-            $legacyIdColumn = match ($table) {
-                'genres' => 'genre_id',
-                'series_master' => 'series_id',
-                'actresses' => 'actress_id',
-                'makers' => 'maker_id',
-            };
-            $where[] = 'EXISTS ('
-                . 'SELECT 1 FROM ' . $relation . ' relation_row '
-                . 'INNER JOIN items related_item ON related_item.content_id = relation_row.content_id '
-                . 'WHERE relation_row.' . $legacyIdColumn . ' = entity.id '
-                . 'AND ' . sitemap_product_where('related_item')
-                . ')';
-        }
-
-        $sources[] = [
-            'from' => $table . ' entity',
-            'path' => (string)$config['path'],
-            'changefreq' => 'weekly',
-            'priority' => '0.7',
-            'where' => implode(' AND ', $where),
-        ];
-    }
-
-    return $sources;
-}
-
-/** @param array{from:string,where:string} $source */
-function sitemap_source_count(array $source): int
-{
-    try {
-        return (int)db()->query(
-            'SELECT COUNT(*) FROM ' . $source['from'] . ' WHERE ' . $source['where']
-        )->fetchColumn();
-    } catch (Throwable $e) {
-        error_log('sitemap count failed: ' . $source['from'] . ': ' . $e->getMessage());
-        return 0;
-    }
-}
-
-/**
- * @param array{from:string,path:string,changefreq:string,priority:string,where:string} $source
- */
-function sitemap_emit_source(array $source, int $start, int &$remaining): int
-{
-    $count = sitemap_source_count($source);
-    if ($remaining <= 0 || $start >= $count) {
-        return $count;
-    }
-
-    $limit = min($remaining, $count - $start);
-    try {
-        $sql = 'SELECT entity.id FROM ' . $source['from']
-            . ' WHERE ' . $source['where']
-            . ' ORDER BY entity.id ASC LIMIT :limit OFFSET :offset';
-        $stmt = db()->prepare($sql);
-        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $start, PDO::PARAM_INT);
-        $stmt->execute();
-        while ($row = $stmt->fetch()) {
-            $id = (int)($row['id'] ?? 0);
-            if ($id <= 0) {
-                continue;
-            }
-            sitemap_url(
-                public_url($source['path']) . '?id=' . rawurlencode((string)$id),
-                $source['changefreq'],
-                $source['priority']
-            );
-            $remaining--;
-        }
-    } catch (Throwable $e) {
-        error_log('sitemap rows failed: ' . $source['from'] . ': ' . $e->getMessage());
-    }
-
-    return $count;
-}
-
-$perSitemap = 10000;
 $staticUrls = [
     [public_url('index.php'), 'daily', '1.0'],
     [public_url('items.php'), 'daily', '0.9'],
+    [public_url('rankings.php'), 'daily', '0.8'],
+    [public_url('genres.php'), 'weekly', '0.8'],
+    [public_url('makers.php'), 'weekly', '0.8'],
 ];
-$sources = sitemap_sources();
-$totalUrls = count($staticUrls);
-foreach ($sources as $source) {
-    $totalUrls += sitemap_source_count($source);
+
+$perSitemap = 10000;
+$counts = [];
+$total = count($staticUrls);
+foreach ($sources as $idx => $source) {
+    try {
+        $counts[$idx] = (int)db()->query('SELECT COUNT(*) FROM ' . $source['from'] . ' WHERE ' . $source['where'])->fetchColumn();
+    } catch (Throwable) {
+        $counts[$idx] = 0;
+    }
+    $total += $counts[$idx];
 }
 
-if ((isset($_GET['index']) && (string)$_GET['index'] === '1') || ($totalUrls > $perSitemap && !isset($_GET['part']))) {
-    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-    echo "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
-    $pages = max(1, (int)ceil($totalUrls / $perSitemap));
+if ((isset($_GET['index']) && (string)$_GET['index'] === '1') || ($total > $perSitemap && !isset($_GET['part']))) {
+    echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
+    $pages = max(1, (int)ceil($total / $perSitemap));
     for ($i = 1; $i <= $pages; $i++) {
-        echo "  <sitemap>\n";
-        echo '    <loc>' . sitemap_e(public_url('sitemap.php') . '?part=' . $i) . "</loc>\n";
-        echo "  </sitemap>\n";
+        echo '  <sitemap><loc>' . sitemap_e(public_url('sitemap.php') . '?part=' . $i) . "</loc></sitemap>\n";
     }
     echo "</sitemapindex>\n";
-    return;
+    exit;
 }
 
 $part = max(1, (int)($_GET['part'] ?? 1));
-$start = ($part - 1) * $perSitemap;
+$skip = ($part - 1) * $perSitemap;
 $remaining = $perSitemap;
 
-echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-echo "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
-
-foreach ($staticUrls as $index => $url) {
-    if ($index < $start) {
-        continue;
-    }
-    if ($remaining <= 0) {
-        break;
-    }
+echo "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
+foreach ($staticUrls as $url) {
+    if ($skip > 0) { $skip--; continue; }
+    if ($remaining <= 0) { break; }
     sitemap_url((string)$url[0], (string)$url[1], (string)$url[2]);
     $remaining--;
 }
-$start = max(0, $start - count($staticUrls));
 
-foreach ($sources as $source) {
-    $count = sitemap_emit_source($source, $start, $remaining);
-    $start = max(0, $start - $count);
+foreach ($sources as $idx => $source) {
+    $sourceCount = $counts[$idx] ?? 0;
+    if ($skip >= $sourceCount) { $skip -= $sourceCount; continue; }
+    if ($remaining <= 0) { break; }
+    $limit = min($remaining, max(0, $sourceCount - $skip));
+    if ($limit <= 0) { $skip = 0; continue; }
+    try {
+        $stmt = db()->prepare('SELECT entity.id FROM ' . $source['from'] . ' WHERE ' . $source['where'] . ' ORDER BY entity.id ASC LIMIT :limit OFFSET :offset');
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $skip, PDO::PARAM_INT);
+        $stmt->execute();
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id < 1) { continue; }
+            sitemap_url(public_url((string)$source['path']) . '?id=' . $id, 'weekly', (string)$source['priority']);
+            $remaining--;
+        }
+    } catch (Throwable $e) {
+        error_log('Toys sitemap failed: ' . $e->getMessage());
+    }
+    $skip = 0;
 }
-
 echo "</urlset>\n";

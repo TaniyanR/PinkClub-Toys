@@ -94,10 +94,11 @@ foreach ($alphaGroups as &$groupRows) {
 unset($groupRows);
 $sortByName($otherRows);
 
-$title = 'ジャンル一覧';
+$title = 'カテゴリ一覧';
+$pageDescription = '大人のおもちゃをカテゴリから探せます。';
 require __DIR__ . '/partials/header.php';
 ?>
-<?php pcf_render_hero('ジャンル一覧'); ?>
+<?php pcf_render_hero('カテゴリ一覧', '商品タイプから探す'); ?>
 
 <?php if ($displayRows !== []): ?>
   <div class="pcf-kana-directory">
@@ -139,6 +140,6 @@ require __DIR__ . '/partials/header.php';
     <?php endif; ?>
   </div>
 <?php else: ?>
-  <?php pcf_render_empty('ジャンルデータがありません。'); ?>
+  <?php pcf_render_empty('カテゴリデータがありません。'); ?>
 <?php endif; ?>
 <?php require __DIR__ . '/partials/footer.php'; ?>
