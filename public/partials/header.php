@@ -8,7 +8,6 @@ $safeTextSetting = static function (string $key, string $default = ''): string {
     if (function_exists('front_safe_text_setting')) {
         return front_safe_text_setting($key, $default);
     }
-
     try {
         if (function_exists('setting')) {
             $value = setting($key, $default);
@@ -23,18 +22,12 @@ $safeTextSetting = static function (string $key, string $default = ''): string {
             app_log_error('header safe text setting fallback failed: ' . $key, $e);
         }
     }
-
     return $default;
 };
 
 $siteName = trim($safeTextSetting('site_name', ''));
-if ($siteName === '') {
-    $siteName = trim($safeTextSetting('site.title', ''));
-}
-if ($siteName === '') {
-    $siteName = 'PinkClub Toys';
-}
-
+if ($siteName === '') { $siteName = trim($safeTextSetting('site.title', '')); }
+if ($siteName === '') { $siteName = 'PinkClub Toys'; }
 $tagline = trim($safeTextSetting('site.tagline', ''));
 $keywords = trim($safeTextSetting('site.keywords', ''));
 $logoPath = trim($safeTextSetting('site.logo_path', ''));
@@ -52,19 +45,13 @@ $faviconExt = strtolower((string)pathinfo($faviconPath, PATHINFO_EXTENSION));
 $faviconType = $faviconExt === 'png' ? 'image/png' : 'image/x-icon';
 $canRenderAd = function_exists('render_ad');
 $descriptionText = (string)($pageDescription ?? '');
-if ($descriptionText === '') {
-    $descriptionText = $tagline;
-}
+if ($descriptionText === '') { $descriptionText = $tagline; }
 $canonicalHref = isset($canonicalUrl) && is_string($canonicalUrl) && $canonicalUrl !== '' ? $canonicalUrl : '';
 $ogUrl = isset($ogUrl) && is_string($ogUrl) && $ogUrl !== '' ? $ogUrl : ($canonicalHref !== '' ? $canonicalHref : public_url(basename((string)($_SERVER['SCRIPT_NAME'] ?? 'index.php'))));
 $ogType = isset($ogType) && is_string($ogType) && $ogType !== '' ? $ogType : 'website';
 $ogImage = isset($ogImage) && is_string($ogImage) ? trim($ogImage) : '';
-if ($ogImage === '' && $logoPath !== '') {
-    $ogImage = $logoUrl;
-}
-if ($ogImage !== '' && !str_starts_with($ogImage, 'http://') && !str_starts_with($ogImage, 'https://') && !str_starts_with($ogImage, '/')) {
-    $ogImage = asset_url($ogImage);
-}
+if ($ogImage === '' && $logoPath !== '') { $ogImage = $logoUrl; }
+if ($ogImage !== '' && !str_starts_with($ogImage, 'http://') && !str_starts_with($ogImage, 'https://') && !str_starts_with($ogImage, '/')) { $ogImage = asset_url($ogImage); }
 $jsonLdText = isset($jsonLd) && is_string($jsonLd) && $jsonLd !== '' ? $jsonLd : '';
 $relPrevHref = isset($relPrev) && is_string($relPrev) && $relPrev !== '' ? $relPrev : '';
 $relNextHref = isset($relNext) && is_string($relNext) && $relNext !== '' ? $relNext : '';
@@ -144,8 +131,3 @@ $relNextHref = isset($relNext) && is_string($relNext) && $relNext !== '' ? $relN
       </nav>
     <?php endif; ?>
     <div class="site-main__body">
-    <?php if ($scriptName === 'index.php'): ?>
-      <?php require __DIR__ . '/home_mood.php'; ?>
-      <?php require __DIR__ . '/home_recently_viewed.php'; ?>
-      <?php require __DIR__ . '/home_recommendations.php'; ?>
-    <?php endif; ?>
